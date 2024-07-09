@@ -4,7 +4,7 @@ plt.rcParams['svg.fonttype']='none'
 import pickle
 from .bootstrapTest import bootstrap_traces, bootstrapTest, bootstrap, timeDependentDifference
 from .bootstrapTest import bootstrap_diff, bootstrap_relative
-from .measurements import adaptationTime, peakResponse, totalResponse, totalResponse_pop, responseDuration
+from .measurements import adaptationTime, peakResponse, totalResponse, totalResponse_pop, responseDuration, halfLife
 from .measurements import sensitization, habituation,sensitizationRate,habituationRate, tPeak
 from tools.measurements import pulsesPop, sensitization, habituation
 def data_of_interest(names,interest=[],exclude=[]):
@@ -15,6 +15,7 @@ def data_of_interest(names,interest=[],exclude=[]):
             if i in dat:
                 keep = True
                 for ex in exclude:
+
                     if ex in dat: keep = False
                 if keep: to_plot.append(dat)
     return to_plot
@@ -39,7 +40,7 @@ def rnai_response_regen(interest,exclude,n_boot=1e3,statistic=np.median,whole_re
         name = 'data/LDS_response_rnai.pickle'
         for d in data:
             if '30s' in d:
-                if 'vibe' in d:
+                if ('vibe' in d) or ('Vibe' in d):
                     name = 'data/LDS_response_vibration.pickle'
                     ref.append('WT_30s75p')
                 else:
@@ -51,9 +52,11 @@ def rnai_response_regen(interest,exclude,n_boot=1e3,statistic=np.median,whole_re
                 name = 'data/LDS_response_uvRange.pickle'
                 ref.append('WT_1s')
             else:
-                ref.append('WT')
+                ref.append('WT')       
         with open(name,'rb') as f:
             result_ref = pickle.load(f)
+
+
 
     if not(type(ylim[0]) is tuple):
         ylim = tuple([ylim for _ in range(len(data))])
@@ -135,9 +138,10 @@ def rnai_response_regen(interest,exclude,n_boot=1e3,statistic=np.median,whole_re
 
 
 def merge_regenerations(data,ref=None,day=None,conf_interval=99,n_boot=1e3,stat_testing=True,
-                       ylim=(0,2)):
+                       ylim=(0,2),vibration=False):
     if day is None:
         day = [0 for _ in data]
+
     if ref is None:
         if '30s' in data[0]:
             ref = 'WT_30s'
@@ -163,13 +167,137 @@ def merge_regenerations(data,ref=None,day=None,conf_interval=99,n_boot=1e3,stat_
     name = 'data/LDS_response_regen.pickle'
     with open(name,'rb') as f:
             result = pickle.load(f)
-    ref_name = 'data/LDS_response_uvRange.pickle'
+    if vibration:
+        ref_name = 'data/LDS_response_vibration.pickle'
+    if not 'WT' in ref:
+        ref_name = 'data/LDS_response_rnai.pickle'
+    else:
+        ref_name = 'data/LDS_response_uvRange.pickle'
 #     ref_name = 'data/LDS_response_rnai.pickle'
     with open(ref_name,'rb') as f:
             result_ref = pickle.load(f)
 
     # print(result_ref.keys())
-    fig, ax = plt.subplots(nrows=9,sharex=True,sharey=True,figsize=(4,16))
+    fig, ax = plt.subplots(nrows=12,sharex=True,sharey=True,figsize=(4,16))
+
+    xx_ref=(result_ref[ref])
+    print(ref_name,xx_ref.shape[0])
+    if n_boot>1:
+        yy_ref,rng_ref = bootstrap_traces(xx_ref,statistic=np.median,n_boot=n_boot,
+                                          conf_interval=conf_interval)
+    else:
+        yy_ref=np.median(xx_ref,axis=0)
+        rng_ref = (np.percentile(xx_ref,pl,axis=0),np.percentile(xx_ref,ph,axis=0))
+    d=day.copy()
+    for j in range(len(ax)):
+        c = plt.cm.cool(j/len(ax))
+        xx=[]
+        for i,dat in enumerate(data):
+            if d[i]>j or (j-d[i])>=len(result[dat]):
+                continue
+            if result[dat][j-d[i]].size==0: continue
+            xx.append((result[dat][j-d[i]]))
+        if len(xx)==0: continue
+        xx = np.concatenate(xx)
+        print(j,xx.shape[0])
+        if xx.size==0: continue
+        if n_boot>1:
+            yy,rng = bootstrap_traces(xx,statistic=np.median,n_boot=n_boot,
+                                      conf_interval=conf_interval)
+            ax[j].plot(result['tau']-sh,yy,label=j, color=c)
+            ax[j].fill_between(result['tau']-sh,*rng,alpha=.3,edgecolor=None,facecolor=c)
+
+        else:
+            ax[j].plot(result['tau']-sh,np.median(xx,axis=0),label=j, color=c)
+            ax[j].fill_between(result['tau']-sh,np.percentile(xx,pl,axis=0),np.percentile(xx,ph,axis=0),alpha=.3,edgecolor=None,facecolor=c)
+            xx_dat=xx.copy()
+
+        ax[j].plot(result_ref['tau']-sh,yy_ref,color='grey',zorder=-1)
+        ax[j].fill_between(result_ref['tau']-sh,*rng_ref,alpha=.3,edgecolor=None,facecolor='grey',zorder=-2)
+        ax[j].fill_between([-sh,0,],[-1,-1],[10,10],facecolor='thistle',alpha=.3,zorder=-20)
+        ax[j].set_yticks([0,1,2])
+
+        #Do a time-dependent test on the reference and current condition
+        xp_ref = result_ref['tau']
+        xp_ = result['tau']
+        loc=np.argmin(xp_**2)
+        ind_sig = np.arange(-5*120,10*120)+loc
+        loc_ref=np.argmin(xp_ref**2)
+        ind_sig_ref = np.arange(-5*120,10*120)+loc_ref
+        if stat_testing:
+                time_sig = timeDependentDifference(xx[:,ind_sig],xx_ref[:,ind_sig_ref],
+                                                   n_boot=n_boot,conf_interval=conf_interval)
+                x_sig = xp_[ind_sig]
+                y_sig = .1*(ylim[1]-ylim[0])
+                bott = np.zeros_like(x_sig)+ylim[1]
+                ax[j].fill_between(x_sig,bott,bott-y_sig*time_sig,
+                    facecolor=plt.cm.cool(j/7),alpha=.4)
+                box_keys={'lw':1, 'c':'k'}
+                ax[j].plot(x_sig,bott,**box_keys)
+                ax[j].plot(x_sig,bott-y_sig,**box_keys)
+                ax[j].plot([ind_sig[0],ind_sig[0]],[bott[0],bott[0]-y_sig],**box_keys)
+                ax[j].plot([10,10],[bott[0],bott[0]-y_sig],**box_keys)
+
+
+    #    ax[j].legend()
+
+
+    #plt.xlim(-20,60)
+    #plt.yscale('log')
+    #ax[-1].set_ylim(0,.5)
+    ax[-1].set_xlim(-1,7)
+    ax[-1].set_ylim(ylim)
+    ax[len(ax)//2].set_ylabel('Z')
+    plt.xlabel('time (min)')
+    #ax[0].set_title(data + ': Whole Worm control')
+    return fig, ax
+##################################################################################################################
+
+def merge_viberegen(data, ref=None, day=None, conf_interval=99, n_boot=1e3, stat_testing=True,
+                       ylim=(0,2), vibration=False):
+    if day is None:
+        day = [0 for _ in data]
+    if ref is None:
+        ref = []
+        if '30s' in data[0]:
+            ref.append('WT_30s')
+        elif '10s' in data[0]:
+            ref.append('WT_10s')
+        elif '1s' in data[0]:
+            ref.append('WT_1s')
+        else:
+            ref.append('WT')
+
+    if '30s' in data[0]:
+        sh = .5
+    elif '10s' in data[0]:
+        sh = 10/60
+    elif '1s' in data[0]:
+        sh = 1/60
+    else:
+        sh = 5/60
+
+    pl = 25
+    ph = 75
+
+    name = 'data/LDS_response_regen.pickle'
+    with open(name,'rb') as f:
+            result = pickle.load(f)
+    if vibration:
+        ref = []
+        ref_name = 'data/LDS_response_vibration.pickle'
+        with open(ref_name,'rb') as f:
+            result_ref = pickle.load(f)
+            ref.append('WT_30s75p')
+    else:
+        ref_name = 'data/LDS_response_uvRange.pickle'
+#     ref_name = 'data/LDS_response_rnai.pickle'
+        with open(ref_name,'rb') as f:
+            result_ref = pickle.load(f)
+
+    # print(result_ref.keys())
+    fig, ax = plt.subplots(nrows=12,sharex=True,sharey=True,figsize=(4,16))
+
     xx_ref=(result_ref[ref])
     print(ref_name,xx_ref.shape[0])
     if n_boot>1:
@@ -242,11 +370,12 @@ def merge_regenerations(data,ref=None,day=None,conf_interval=99,n_boot=1e3,stat_
     #ax[0].set_title(data + ': Whole Worm control')
     return fig, ax
 
+
 ###############################################################################################################
 
 def regen_single_day(data,ref=None,dpa=0,n_boot=1e3,statistic=np.median,
                       ylim=(0,2),stat_testing=True,conf_interval=99,day_shift=None,
-                      measure_compare='diff',pop_measure=[responseDuration,totalResponse_pop,peakResponse],
+                      measure_compare='diff',pop_measure=[responseDuration,totalResponse_pop,peakResponse,halfLife],
                       plot_comparison=False,):
     #keys for measure_compare
     n_boot_meas=n_boot
@@ -263,6 +392,8 @@ def regen_single_day(data,ref=None,dpa=0,n_boot=1e3,statistic=np.median,
             ref = 'WT_10s'
         elif '1s' in data[0]:
             ref = 'WT_1s'
+        elif 'pc2_30s' in data[0]:
+            ref = 'pc2_30s2h'
         else:
             ref = 'WT'
     if '30s' in data[0]:
@@ -283,7 +414,7 @@ def regen_single_day(data,ref=None,dpa=0,n_boot=1e3,statistic=np.median,
     ref_name = 'data/LDS_response_rnai.pickle'
     with open(ref_name,'rb') as f:
         result_ref = pickle.load(f)
-
+    # print(result.keys())
     fig, ax = plt.subplots(nrows=1,ncols=1+len(pop_measure),figsize=(15,10),
                              gridspec_kw={'width_ratios': [4]+[1 for _ in range(len(pop_measure))]})
     xx_ref=(result_ref[ref])
@@ -452,13 +583,19 @@ def excess_activity_regeneration(n_boot=1e3,statistic=np.median,
     name = 'data/LDS_response_regen_indPulse.pickle'
     with open(name,'rb') as f:
         result = pickle.load(f)
-    to_plot = ['WT_8hpa_30s2h','WT_8hpa_10s2h','WT_8hpa_5s2h','WT_8hpa_1s2h']
-    to_plot = [('WT_8hpa_30s2h','WT_79hpa_30s2h'),
-               ('WT_8hpa_10s2h','070622WT_72hpa_10s2h'),
-               ('WT_8hpa_5s2h','WT_72hpa_5s2h'),
-                ('WT_8hpa_1s2h',)]#'WT_72hpa_1s2h')]
+    # to_plot = [('WT_8hpa_30s2h','WT_8hpa_10s2h','WT_8hpa_5s2h','WT_8hpa_1s2h']
+
+
+    to_plot = [('WT_8hpa_30s2h','WT_79hpa_30s2h','100220v2022_78hpa_30s2h','082823WT_144hpa_30s2h'),
+               ('WT_8hpa_10s2h','070622WT_72hpa_10s2h','082223WT_168hpa_10s2h',),
+               ('WT_8hpa_5s2h','110521v2022_72hpa_5s2h','012821v2022_72hpa_5s2h', '082823WT_144hpa_5s2h'),
+                ('WT_8hpa_1s2h','WT_72hpa_1s2h','082223WT_168hpa_1s2h')]#'WT_72hpa_1s2h')]
 #     to_plot = [('WT_8hpa_5s2h',),#'WT_72hpa_5s2h'),
 #                ('WT_8hpa_5s2h','WT_72hpa_5s2h'),]
+
+
+
+
     to_plot.reverse()
     to_plot.extend(data_of_interest(result.keys(),interest,exclude))
 
@@ -480,39 +617,42 @@ def excess_activity_regeneration(n_boot=1e3,statistic=np.median,
     if n_pulse==1:
         ax=[ax]
     x_names = []
-    for ii,cond in enumerate(to_plot):
-        #print(cond)
-        excess_start = []
-        excess_end = []
-        y_all = []
-        from tqdm import tqdm
-#         #define reference
-#         if '5s2h' in cond:
-#             response = result_ref['WT']
-#             x_names.append('5')
-#         else:
-#             if 'hpa_' in cond:
-#                 x_st = cond.find('hpa_')
-#             else:
-#                 x_st = cond.find('hpi_')
-#             x_en = cond[x_st:].find('s')
-#             response = result_ref['WT_'+cond[x_st+4:x_st+x_en+1]]
-#             x_names.append(cond[x_st+4:x_st+x_en+1])
-# #                 response = result_ref[reference[ii]]
+    ii = 0
+    for grouped_conditions in to_plot:
+        for cond in grouped_conditions:
+            excess_start = []
+            excess_end = []
+            y_all = []
+            from tqdm import tqdm
 
-        #define reference
-        if '5s2h' in cond[0]:
-            response = result_ref['WT']
-            x_names.append('5')
-        else:
-            if 'hpa_' in cond[0]:
-                x_st = cond[0].find('hpa_')
+            #         #define reference
+            #         if '5s2h' in cond:
+            #             response = result_ref['WT']
+            #             x_names.append('5')
+            #         else:
+            #             if 'hpa_' in cond:
+            #                 x_st = cond.find('hpa_')
+            #             else:
+            #                 x_st = cond.find('hpi_')
+            #             x_en = cond[x_st:].find('s')
+            #             response = result_ref['WT_'+cond[x_st+4:x_st+x_en+1]]
+            #             x_names.append(cond[x_st+4:x_st+x_en+1])
+            # #                 response = result_ref[reference[ii]]
+
+            #define reference
+            if '5s2h' in cond[0]:
+                response = result_ref['WT']
+                x_names.append('5')
             else:
-                x_st = cond[0].find('hpi_')
-            x_en = cond[0][x_st:].find('s')
-            response = result_ref['WT_'+cond[0][x_st+4:x_st+x_en+1]]
-            x_names.append(cond[0][x_st+4:x_st+x_en+1])
-#                 response = result_ref[reference[ii]]
+                if 'hpa_' in cond[0]:
+                    x_st = cond[0].find('hpa_')
+                else:
+                    x_st = cond[0].find('hpi_')
+                x_en = cond[0][x_st:].find('s')
+                response = result_ref['WT_'+cond[0][x_st+4:x_st+x_en+1]]
+                x_names.append(cond[0][x_st+4:x_st+x_en+1])
+    #                 response = result_ref[reference[ii]]
+            ii += 1
 
         tau = result_ref['tau'].copy()
         if sh:
@@ -614,6 +754,190 @@ def excess_activity_regeneration(n_boot=1e3,statistic=np.median,
 
     return fig, ax
 
+###################################################################################################
+## previous code before trying to adjust from tuples to more experiments LW101723
+
+# def excess_activity_regeneration(n_boot=1e3,statistic=np.median,
+#                                integrate=10*120,pool=12,color_scheme=None,
+#                                 conf_interval=99):
+#
+#     interest=[]
+#     exclude=[]
+#     name = 'data/LDS_response_regen_indPulse.pickle'
+#     with open(name,'rb') as f:
+#         result = pickle.load(f)
+#     # to_plot = [('WT_8hpa_30s2h','WT_8hpa_10s2h','WT_8hpa_5s2h','WT_8hpa_1s2h']
+#
+#
+#     to_plot = [('WT_8hpa_30s2h','WT_79hpa_30s2h','100220v2022_78hpa_30s2h','082823WT_144hpa_30s2h'),
+#                ('WT_8hpa_10s2h','070622WT_72hpa_10s2h','082223WT_168hpa_10s2h',),
+#                ('WT_8hpa_5s2h','110521v2022_72hpa_5s2h','012821v2022_72hpa_5s2h', '082823WT_144hpa_5s2h'),
+#                 ('WT_8hpa_1s2h','WT_72hpa_1s2h','082223WT_168hpa_1s2h')]#'WT_72hpa_1s2h')]
+# #     to_plot = [('WT_8hpa_5s2h',),#'WT_72hpa_5s2h'),
+# #                ('WT_8hpa_5s2h','WT_72hpa_5s2h'),]
+#
+#
+#
+#
+#     to_plot.reverse()
+#     to_plot.extend(data_of_interest(result.keys(),interest,exclude))
+#
+#     subtract_ref=True #has to be for this analysis
+#     reference = []
+#     if subtract_ref:
+#         ref_name = 'data/LDS_response_uvRange.pickle'
+#         with open(ref_name,'rb') as f:
+#             result_ref = pickle.load(f)
+#
+#     max_t = 200
+#     isi = integrate
+#     integrate = isi
+#     pulse_list = [0,]
+#     sh = []
+#
+#     n_pulse=len(pulse_list)
+#     fig, ax = plt.subplots(nrows=n_pulse,sharex=True,figsize=(12,8))
+#     if n_pulse==1:
+#         ax=[ax]
+#     x_names = []
+#     for ii,cond in enumerate(to_plot):
+#         #print(cond)
+#         excess_start = []
+#         excess_end = []
+#         y_all = []
+#         from tqdm import tqdm
+# #         #define reference
+# #         if '5s2h' in cond:
+# #             response = result_ref['WT']
+# #             x_names.append('5')
+# #         else:
+# #             if 'hpa_' in cond:
+# #                 x_st = cond.find('hpa_')
+# #             else:
+# #                 x_st = cond.find('hpi_')
+# #             x_en = cond[x_st:].find('s')
+# #             response = result_ref['WT_'+cond[x_st+4:x_st+x_en+1]]
+# #             x_names.append(cond[x_st+4:x_st+x_en+1])
+# # #                 response = result_ref[reference[ii]]
+#
+#         #define reference
+#         if '5s2h' in cond[0]:
+#             response = result_ref['WT']
+#             x_names.append('5')
+#         else:
+#             if 'hpa_' in cond[0]:
+#                 x_st = cond[0].find('hpa_')
+#             else:
+#                 x_st = cond[0].find('hpi_')
+#             x_en = cond[0][x_st:].find('s')
+#             response = result_ref['WT_'+cond[0][x_st+4:x_st+x_en+1]]
+#             x_names.append(cond[0][x_st+4:x_st+x_en+1])
+# #                 response = result_ref[reference[ii]]
+#
+#         tau = result_ref['tau'].copy()
+#         if sh:
+#             tau -= sh[ii]
+#         pulse=0
+#         loc = np.argmin(result_ref['tau']**2)
+#         from .bootstrapTest import bootstrap
+#         from .measurements import totalResponse_pop as M
+#         y,rng,dist = bootstrap(response[:,loc:loc+10*120],n_boot=1e3,statistic=M,
+#                                                conf_interval=conf_interval,return_samples=True)
+# #         data = bootstrapTest('reference', [response,], tau=tau,
+# #                               n_pulse=max(pulse_list)+1, isi=isi,
+# #                               integrate_time=integrate,experiment_list=None)
+# #         y,rng = data.canonical_estimate([0,pulse],sample_size=None,
+# #                                         statistic=statistic, n_boot=n_boot)
+#         y_ref = y.copy()
+#         #each bootstrap is a set of samples from all timepoints
+#         for count in tqdm(range(int(n_boot))):
+#             for n_pulse, pulse in enumerate(pulse_list):
+#                 y = []
+#                 t_plot = []
+# #                 response = result[cond]['data']
+# #                 response_pool = [np.concatenate(response[i:i+pool]) for i in range(len(response))]
+#                 response = result[cond[0]]['data']
+#                 if len(cond)>1:
+#                     init = int((result[cond[1]]['initial']-result[cond[0]]['initial'])/2)
+#                     #print(result[cond[1]]['initial'],result[cond[0]]['initial'], init)
+#                     for i,dat in enumerate(result[cond[1]]['data']):
+#                         if i+init>=len(response):
+#                             response.append(dat)
+#                         else:
+#                             response[init+i] = np.append(response[init+i],dat,axis=0)
+#
+#                 response_pool = [np.concatenate(response[i:i+pool]) for i in range(len(response))]
+#
+#
+#                 tau = result['tau'].copy()
+#                 if sh:
+#                     tau -= sh[ii]
+# #                 data = bootstrapTest('data', response_pool, tau=tau,
+# #                                       n_pulse=max(pulse_list)+1, isi=isi,
+# #                                       integrate_time=integrate,experiment_list=None)
+# #                 for t in range(min(max_t,len(response))):
+# #                     y_t, rng = data.canonical_estimate([t,pulse],sample_size=None,
+# #                                                        statistic=statistic,n_boot=1)
+# #                     y.append(y_t)
+# #                     t_plot.append(t)
+# #                 t_plot = np.array(t_plot) * result[cond[0]]['spacing'] + result[cond[0]]['initial']
+#                 t0 = np.argmin(tau)
+#                 for r in response_pool:
+#                    y.append(np.median(r[np.random.choice(np.arange(r.shape[0]),r.shape[0],replace=True),
+#                                         t0:t0+integrate],axis=0).mean())
+#                 t_plot = np.arange(len(y)) * result[cond[0]]['spacing'] + result[cond[0]]['initial']
+#
+#                 y=np.array(y)
+#                 y_all.append(y)
+#                 if subtract_ref:
+#                     y -= y_ref
+#                 #for this bootstrap, note the first and last timepoints the response is above reference
+#                 try:
+#                     excess_start.append(t_plot[np.where(y>0)[0][0]])
+#                 except:
+#                     continue
+# #                     excess_start.append(t_plot[-1])
+#                 excess_end.append(t_plot[np.where(y>0)[0][-1]])
+#                 peak = np.argmax(y)
+# #                 try:
+# #                     excess_end.append(t_plot[peak:][np.where(y[peak:]<.1*y[peak])[0][0]])
+# #                 except:
+# #                     excess_end.append(t_plot[peak])
+# #                 try:
+# #                     excess_end.append(t_plot[peak:][np.where(y[peak:]<0)[0][0]])
+# #                 except:
+# #                     excess_end.append(t_plot[-1])
+#
+# #         plt.plot(t_plot,np.mean(y_all,axis=0),label=cond[0])
+# #     plt.legend()
+#         #calculate the mean and confidence range
+#         excess_start = np.array(excess_start)
+#         excess_end = np.array(excess_end)
+#         if ii==0:
+#             plt.scatter([ii],[excess_start.mean()],c='cornflowerblue',label='excess activity begins')
+#             plt.scatter([ii],[excess_end.mean()],c='firebrick',label='excess activity ends')
+#         else:
+#             plt.scatter([ii],[excess_start.mean()],c='cornflowerblue')
+#             plt.scatter([ii],[excess_end.mean()],c='firebrick')
+#         start_lo = np.percentile(excess_start,(100-conf_interval)/2)
+#         start_hi = np.percentile(excess_start,conf_interval+(100-conf_interval)/2)
+#         plt.plot([ii,ii],[start_lo,start_hi],c='cornflowerblue')
+#         end_lo = np.percentile(excess_end,(100-conf_interval)/2)
+#         end_hi = np.percentile(excess_end,conf_interval+(100-conf_interval)/2)
+#         plt.plot([ii,ii],[end_lo,end_hi],c='firebrick')
+#
+#     plt.legend()
+#     plt.xlabel('UV dose')
+#     plt.ylabel('hpa')
+#     plt.xticks(np.arange(ii+1),labels=x_names)
+#     plt.legend()
+#
+#     return fig, ax
+
+
+
+
+
 
 #####################################################################################################
 
@@ -631,7 +955,7 @@ def excess_activity_regeneration_v2(n_boot=1e3,statistic=np.median,
     name = 'data/LDS_response_regen_indPulse.pickle'
     with open(name,'rb') as f:
         result = pickle.load(f)
-    to_plot = ['WT_8hpa_30s2h','WT_8hpa_10s2h','WT_8hpa_5s2h','WT_8hpa_1s2h']
+    #to_plot = ['WT_8hpa_30s2h','WT_8hpa_10s2h','WT_8hpa_5s2h','WT_8hpa_1s2h']
     to_plot = [('WT_8hpa_30s2h','WT_79hpa_30s2h'),
                ('WT_8hpa_10s2h',),
                ('WT_8hpa_5s2h','WT_72hpa_5s2h'),
@@ -780,10 +1104,12 @@ from .measurements import adaptationTime, peakResponse, totalResponse, totalResp
 from .measurements import sensitization, habituation,sensitizationRate,habituationRate, tPeak
 
 def rnai_regen_dailyStats(interest,exclude,n_boot=1e3,statistic=np.median,whole_ref=True,
-                       stat_testing=True,conf_interval=99, pop_measure=[responseDuration,totalResponse_pop,peakResponse],
+                       stat_testing=True,conf_interval=99, pop_measure=[responseDuration,totalResponse_pop,peakResponse], start_day = [],
                          measure_compare='diff'):
 
     fig,ax = plt.subplots(nrows=len(pop_measure))
+    if len(pop_measure)==1:
+        ax = [ax]
     #keys for measure_compare
     DIFFERENCE = ['diff','difference','subtract']
     RELATIVE = ['relative','rel','divide']
@@ -794,33 +1120,55 @@ def rnai_regen_dailyStats(interest,exclude,n_boot=1e3,statistic=np.median,whole_
     name = 'data/LDS_response_regen.pickle'
     with open(name,'rb') as f:
         result = pickle.load(f)
-    data = data_of_interest(result.keys(),interest,exclude)[0]
-    if (type(data) is list) and len(data)>1:
-        print('WARNING: only analyzing first returned result from interest. Complete interest list is:')
-        print(data)
-        data = data[0]
+
+    if len(interest)>1:
+        assert len(interest) == len(start_day), "please provide a start day for each set in interest you are combining"
+    else:
+        start_day = [0 for _ in interest]
+    combined_data = [[] for _ in range(100)] 
+    data=None
+       
+    for interest_i, day_i in zip(interest, start_day):   
+        data = data_of_interest(result.keys(),[interest_i],exclude)[0]
+        print(interest_i,data)
+        if (type(data) is list) and len(data)>1:
+            print('WARNING: only analyzing first returned result from interest. Complete interest list is:')
+            print(data)
+            data = data[0]
+        # print(data,result[data].shape)
+        for j, day_data in enumerate(result[data]):
+            if not len(day_data):
+                continue
+            # print(j+day_i)
+            combined_data[j+day_i].append(day_data)
+    # return combined_data
+    combined_data = [np.concatenate(dat,axis=0) for dat in combined_data if dat]
     result_ref = result
     ref = []
     if whole_ref:
         ref = []
         name = 'data/LDS_response_rnai.pickle'
         d=data
+        cond = "WT"
+        if 'pc2' in interest[0]:
+            cond = "022421pc2"
         if '30s' in d:
             if 'vibe' in d:
                 name = 'data/LDS_response_vibration.pickle'
                 ref.append('WT_30s75p')
             else:
-                ref.append('WT_30s')
+                ref.append(cond+'_30s')
         elif '10s' in d:
             name = 'data/LDS_response_uvRange.pickle'
-            ref.append('WT_10s')
+            ref.append(cond+'_10s')
         elif '1s' in d:
             name = 'data/LDS_response_uvRange.pickle'
-            ref.append('WT_1s')
+            ref.append(cond+'_1s')
         else:
-            ref.append('WT')
+            ref.append(cond)
         with open(name,'rb') as f:
             result_ref = pickle.load(f)
+        # print(result_ref.keys())
         yp_ref = result_ref[ref[0]]
         loc_ref = np.argmin(result_ref['tau']**2)
         for i,M in enumerate(pop_measure):
@@ -842,9 +1190,10 @@ def rnai_regen_dailyStats(interest,exclude,n_boot=1e3,statistic=np.median,whole_
                 pc.set_facecolor('grey')
 
     loc = np.argmin(result['tau']**2)
-    for j in range(len (result[data])):
+    n_day = np.sum([len(dat)>0 for dat in combined_data])
+    for j in range(len (combined_data)):
         xp = result['tau']
-        yp=result[data][j]
+        yp=combined_data[j]#result[data][j]
         if yp.size==0:
             continue
         #pull out first day as ref if not whole ref
@@ -1053,22 +1402,31 @@ def excess_activity_regeneration_v072722(interest=[],exclude=[],n_boot=1e3,stati
 
 
 ##############################################################################
+from .measurements import totalResponse_pop, peakResponse, responseDuration, halfLife
+
 def excess_activity_regeneration_v081022(n_boot=1e3,statistic=np.median,
                                integrate=10*120,pool=12,color_scheme=None,
-                                conf_interval=99):
+                                conf_interval=99, M=totalResponse_pop,
+                                pc2 = False):
     fig,ax=plt.subplots(ncols=2,figsize=(12,8), gridspec_kw={'width_ratios': [3,1]})
     interest=[]
     exclude=[]
     name = 'data/LDS_response_regen_indPulse.pickle'
     with open(name,'rb') as f:
         result = pickle.load(f)
-    to_plot = ['WT_8hpa_30s2h','WT_8hpa_10s2h','WT_8hpa_5s2h','WT_8hpa_1s2h']
-    to_plot = [('WT_8hpa_30s2h','100220v2022_78hpa_30s2h'),
-               ('WT_8hpa_10s2h','070622WT_72hpa_10s2h'),
-               ('WT_8hpa_5s2h','110521v2022_72hpa_5s2h'),#'WT_72hpa_5s2h'),
-                ('WT_8hpa_1s2h','WT_72hpa_1s2h')]
-#     to_plot = [('WT_8hpa_5s2h',),#'WT_72hpa_5s2h'),
-#                ('WT_8hpa_5s2h','WT_72hpa_5s2h'),]
+
+    # to_plot = [('WT_8hpa_30s2h','WT_79hpa_30s2h','100220v2022_78hpa_30s2h','082823WT_144hpa_30s2h'),
+    #             ('WT_8hpa_10s2h','082223WT_168hpa_10s2h','070622WT_72hpa_10s2h','103023WT_72hpa_10s2h'),
+    #             ('WT_8hpa_5s2h','012821v2022_72hpa_5s2h',),
+    #             ('WT_8hpa_1s2h','WT_72hpa_1s2h','082223WT_168hpa_1s2h'),
+    # ]
+
+    to_plot = [('WT_8hpa_30s2h','WT_79hpa_30s2h','100220v2022_78hpa_30s2h','082823WT_144hpa_30s2h'),
+                                    ('WT_8hpa_10s2h','070622WT_72hpa_10s2h','082223WT_168hpa_10s2h',),
+                                    ('WT_8hpa_5s2h','110521v2022_72hpa_5s2h','012821v2022_72hpa_5s2h', '082823WT_144hpa_5s2h'),
+                                    ('WT_8hpa_1s2h','WT_72hpa_1s2h','082223WT_168hpa_1s2h')]
+
+
     to_plot.reverse()
     to_plot.extend(data_of_interest(result.keys(),interest,exclude))
 
@@ -1100,6 +1458,7 @@ def excess_activity_regeneration_v081022(n_boot=1e3,statistic=np.median,
         if '5s2h' in cond[0]:
             response = result_ref['WT']
             x_names.append('5')
+            sh.append(5/60)
         else:
             if 'hpa_' in cond[0]:
                 x_st = cond[0].find('hpa_')
@@ -1107,16 +1466,17 @@ def excess_activity_regeneration_v081022(n_boot=1e3,statistic=np.median,
                 x_st = cond[0].find('hpi_')
             x_en = cond[0][x_st:].find('s')
             response = result_ref['WT_'+cond[0][x_st+4:x_st+x_en+1]]
+            sh.append(float(cond[0][x_st+4:x_st+x_en])/60)
             x_names.append(cond[0][x_st+4:x_st+x_en+1])
 #                 response = result_ref[reference[ii]]
 
+        print(sh)
         tau = result_ref['tau'].copy()
         if sh:
             tau -= sh[ii]
         pulse=0
         loc = np.argmin(result_ref['tau']**2)
         from .bootstrapTest import bootstrap
-        from .measurements import totalResponse_pop as M
         # y,rng,sig,dist = bootstrap_diff(response[:,loc:loc+10*120],response[:,loc:loc+10*120],n_boot=1e3,statistic=M,
         #                                        conf_interval=conf_interval,return_samples=True)
         # plt.plot([0,210],[y,y],c='grey')
@@ -1134,16 +1494,17 @@ def excess_activity_regeneration_v081022(n_boot=1e3,statistic=np.median,
         hi = []
         response = result[cond[0]]['data']
         if len(cond)>1:
-            init = int((result[cond[1]]['initial']-result[cond[0]]['initial'])/2)
-            print('init',init)
-            #print(result[cond[1]]['initial'],result[cond[0]]['initial'], init)
-            for i,dat in enumerate(result[cond[1]]['data']):
-                if i+init>=len(response):
-                    response.append(dat)
-                else:
-                    response[init+i] = np.append(response[init+i],dat,axis=0)
+            for i_cond in range(1,len(cond)):
+                init = int((result[cond[i_cond]]['initial']-result[cond[0]]['initial'])/2)
+                print('init',init)
+                #print(result[cond[1]]['initial'],result[cond[0]]['initial'], init)
+                for i,dat in enumerate(result[cond[i_cond]]['data']):
+                    if i+init>=len(response):
+                        response.append(dat)
+                    else:
+                        response[init+i] = np.append(response[init+i],dat,axis=0)
 
-        response_pool = [np.concatenate(response[i:i+pool]) for i in range(len(response))]
+        response_pool = [np.concatenate(response[i:i+pool]) for i in range(len(response)-pool)]
         print('r_pool',response_pool[0].shape)
 
         tau = result['tau'].copy()
@@ -1211,4 +1572,163 @@ def excess_activity_regeneration_v081022(n_boot=1e3,statistic=np.median,
     plt.ylabel('hpa')
     plt.legend()
 
+    return fig, ax
+
+
+####################################
+
+def regen_dose_response(interest_full,start_day_full,x_loc,n_boot=1e3,statistic=np.median,whole_ref=True,
+                       stat_testing=True,conf_interval=99, pop_measure=[totalResponse_pop], 
+                         measure_compare='diff'):
+
+    fig,ax = plt.subplots(nrows=len(pop_measure),figsize=(20,10))
+    if len(pop_measure)==1:
+        ax = [ax]
+ 
+    #keys for measure_compare
+    DIFFERENCE = ['diff','difference','subtract']
+    RELATIVE = ['relative','rel','divide']
+    #significance marker
+    def mark_sig(ax,loc,c='grey',yy=12):
+        ax.scatter([loc,],yy,marker='*',color=c)
+    name = 'data/LDS_response_regen.pickle'
+    with open(name,'rb') as f:
+        result = pickle.load(f)
+
+    measure_vals = np.zeros((len(interest_full),20))*np.nan
+    ref_vals = np.zeros(len(interest_full)) * np.nan
+    for n_pulse, (interest, start_day) in enumerate(zip(interest_full, start_day_full)):
+        if len(interest)>1:
+            assert len(interest) == len(start_day), "please provide a start day for each set in interest you are combining"
+        else:
+            start_day = [0 for _ in interest]
+        combined_data = [[] for _ in range(100)] 
+        data=None
+        
+        for interest_i, day_i in zip(interest, start_day):   
+            data = data_of_interest(result.keys(),[interest_i],exclude=[])[0]
+            print(interest_i,data)
+            if (type(data) is list) and len(data)>1:
+                print('WARNING: only analyzing first returned result from interest. Complete interest list is:')
+                print(data)
+                data = data[0]
+            # print(data,result[data].shape)
+            for j, day_data in enumerate(result[data]):
+                if not len(day_data):
+                    continue
+                # print(j+day_i)
+                combined_data[j+day_i].append(day_data)
+        # return combined_data
+        combined_data = [np.concatenate(dat,axis=0) for dat in combined_data if dat]
+        result_ref = result
+        ref = []
+        
+
+        if whole_ref:
+            ref = []
+            name = 'data/LDS_response_rnai.pickle'
+            d=data
+            cond = "WT"
+            if 'pc2' in interest[0]:
+                cond = "022421pc2"
+            if '30s' in d:
+                if 'vibe' in d:
+                    name = 'data/LDS_response_vibration.pickle'
+                    ref.append('WT_30s75p')
+                else:
+                    ref.append(cond+'_30s')
+            elif '10s' in d:
+                name = 'data/LDS_response_uvRange.pickle'
+                ref.append(cond+'_10s')
+            elif '1s' in d:
+                name = 'data/LDS_response_uvRange.pickle'
+                ref.append(cond+'_1s')
+            else:
+                ref.append(cond)
+            with open(name,'rb') as f:
+                result_ref = pickle.load(f)
+            # print(result_ref.keys())
+            yp_ref = result_ref[ref[0]]
+            loc_ref = np.argmin(result_ref['tau']**2)
+            for i,M in enumerate(pop_measure):
+                # if measure_compare in DIFFERENCE:
+                #     y,rng,significant = bootstrap_diff(yp_ref[:,loc_ref:loc_ref+15*120],yp_ref[:,loc_ref:loc_ref+15*120]
+                #                             ,n_boot=n_boot,measurement=M,conf_interval=conf_interval)
+                # elif measure_compare in RELATIVE:
+                #     bott = 1
+                #     y,rng,significant = bootstrap_relative(yp_ref[:,loc_ref:loc_ref+15*120],yp_ref[:,loc_ref:loc_ref+15*120]
+                #                             ,n_boot=n_boot,measurement=M,conf_interval=conf_interval)
+                # else:
+                #     y,rng = bootstrap(yp_ref[:,loc_ref:loc_ref+15*120],n_boot=n_boot,statistic=M,conf_interval=conf_interval)
+
+                y,rng,dist = bootstrap(yp_ref[:,loc_ref:loc_ref+15*120],n_boot=n_boot,statistic=M,
+                                    conf_interval=conf_interval, return_samples=True)
+                v = ax[i].violinplot([dist],positions=[x_loc[n_pulse]-.03],
+                                     vert=True,widths=[.3],showextrema=False)
+                ax[i].scatter([x_loc[n_pulse]],[y],color='grey')
+                ref_vals[n_pulse] = y
+                for pc in v['bodies']:
+                    pc.set_facecolor('grey')
+
+        loc = np.argmin(result['tau']**2)
+        n_day = np.sum([len(dat)>0 for dat in combined_data])
+        for j in range(len (combined_data)):
+            if j%2>0: continue
+            if j>8: continue
+            xp = result['tau']
+            yp=combined_data[j]#result[data][j]
+            if yp.size==0:
+                continue
+            #pull out first day as ref if not whole ref
+            if (not whole_ref) and (j==0):
+                yp_ref=result[data][0]
+                loc_ref = loc.copy()
+            for i,M in enumerate(pop_measure):
+                if measure_compare in DIFFERENCE:
+                    y,rng,significant = bootstrap_diff(yp[:,loc:loc+15*120],yp_ref[:,loc_ref:loc_ref+15*120]
+                                            ,n_boot=n_boot,measurement=M,conf_interval=conf_interval)
+                elif measure_compare in RELATIVE:
+                    bott = 1
+                    y,rng,significant = bootstrap_relative(yp[:,loc:loc+15*120],yp_ref[:,loc_ref:loc_ref+15*120]
+                                            ,n_boot=n_boot,measurement=M,conf_interval=conf_interval)
+                else:
+                    y,rng = bootstrap(yp[:,loc:loc+15*120],n_boot=n_boot,statistic=M,conf_interval=conf_interval)
+
+                y,rng,dist = bootstrap(yp[:,loc:loc+15*120],n_boot=n_boot,statistic=M,
+                                    conf_interval=conf_interval, return_samples=True)
+                measure_vals[n_pulse,j] = y
+
+                offset = 0
+                v = ax[i].violinplot([dist],positions=[x_loc[n_pulse]+j*offset],
+                                     vert=True,widths=[.3],showextrema=False)
+
+                c=plt.cm.cool(j/10)
+                for pc in v['bodies']:
+                    pc.set_facecolor(c)
+                    pc.set_alpha(.1)
+
+                if significant:
+                    fill = c
+                else:
+                    fill='none'
+                ax[i].scatter([x_loc[n_pulse]+j*offset],[y],edgecolors=c, facecolors=fill,s=80)
+                    # mark_sig(ax[i],x_loc[n_pulse]+j*.03,c=c,yy=rng[1]*1.1)
+
+        for a,M in zip(ax,pop_measure):
+            a.set_ylabel(M.__name__)
+            a.spines['top'].set_visible(False)
+            a.spines['right'].set_visible(False)
+        for a in ax[:-1]:
+            a.set_xticks([])
+            a.spines['bottom'].set_visible(False)
+        ax[-1].set_xlabel('day')
+
+    plt.plot(x_loc, ref_vals,c='grey')
+    for i in range(measure_vals.shape[1]):
+        c = plt.cm.cool(i/10)
+        if np.isfinite(np.mean(measure_vals[:,i])):
+            plt.plot(x_loc,measure_vals[:,i],label = i,c=c)
+    plt.legend(title='dpa')
+    plt.xlabel("pulse (log10 s)")
+    # plt.xscale('log')
     return fig, ax

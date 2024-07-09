@@ -28,7 +28,8 @@ def rnai_response_layered(interest_list,exclude,n_boot=1e3,statistic=np.median,
                           conf_interval=95, stat_testing=True,powers =[64,]): 
     
     '''compiles 5s and 30s data for given genes of interest and layers on plot'''
-    name = 'data/LDS_response_LONG.pickle'
+    #name = 'data/LDS_response_LONG.pickle'
+    name = 'data/LDS_response_step_90m.pickle'
     with open(name,'rb') as f:
         result = pickle.load(f)
     #keys for measure_compare

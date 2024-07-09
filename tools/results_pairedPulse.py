@@ -37,7 +37,9 @@ def plotTrace(conditions='WT',pulse1=5, pulse2=5, delay=3,
     with open(ref_name,'rb') as f:
         result_ref = pickle.load(f)
     if pulse2==5:
-        ref = data_of_interest(result_ref.keys(),[cond],['+','_','amp','Eye'])#'WT'#'022421pc2'#
+        ref = ['022421pc2']# data_of_interest(result_ref.keys(),[cond],['+','_','amp','Eye'])#'WT'#'022421pc2'#
+        ref = data_of_interest(result_ref.keys(),[cond],['+','_','amp','Eye','1F'])
+        print(ref)
     else:
         ref = data_of_interest(result_ref.keys(),[f'{cond}_{pulse2}s'],['+'])
     #plot single pulse reference
@@ -167,6 +169,7 @@ def compareDelays_rnai(conditions=['WT'],pulse1=5, pulse2=5, delay=[.5,1,3,5,30]
         c=colors[ii]
 
         #loop through conditions
+        measure_distributions = [[] for _ in pop_measure]
         for i,d in enumerate(delay):
 
             test = [f'{cond}_{pulse1}s{pulse2}s_{d}mDelay']#f'WT_{pulse1}s{pulse2}s_{d}mDelay'
@@ -188,13 +191,28 @@ def compareDelays_rnai(conditions=['WT'],pulse1=5, pulse2=5, delay=[.5,1,3,5,30]
                 loc_ref=np.argmin(xp_ref**2)
                 loc=np.argmin(xp**2)
                 bott = 0
+                # measure_distributions[n_m].append(totalResponse(yp[:,loc:loc+15*120]))
+                if True:
+                    baseline =np.median( yp_ref[:,loc-(5*120):loc],axis=0).mean()
+                    print(baseline)
+                    residual = np.median(yp_ref[:,int(loc+d*120):int(loc+(d+10)*120)],axis=0).mean() - baseline
+                    print(d,residual,baseline)
+                    if int(loc+(d+10)*120)>yp_ref.shape[1]:
+                        residual=0
+                else:
+                    residual = 0
+                
+
+
+
                 if measure_compare in DIFFERENCE:
-                    y,rng,significant,dist = bootstrap_diff(yp[:,loc:loc+15*120],yp_ref[:,loc_ref:loc_ref+15*120]
+                    y,rng,significant,dist = bootstrap_diff(yp[:,loc:loc+15*120]-residual,yp_ref[:,loc_ref:loc_ref+15*120]
                                                ,n_boot=n_boot,measurement=M,conf_interval=conf_interval,return_samples=True)
                 elif measure_compare in RELATIVE:
                     bott=1
-                    y,rng,significant,dist = bootstrap_relative(yp[:,loc:loc+15*120],yp_ref[:,loc_ref:loc_ref+15*120]
+                    y,rng,significant,dist = bootstrap_relative(yp[:,loc:loc+15*120]-residual,yp_ref[:,loc_ref:loc_ref+15*120]
                                                ,n_boot=n_boot,measurement=M,conf_interval=conf_interval,return_samples=True)
+                measure_distributions[n_m].append(dist)
                 # else:
                 #     y,rng,dist = bootstrap(yp[:,loc:loc+15*120],n_boot=n_boot,statistic=M,
                 #                            conf_interval=conf_interval,return_samples=True)
@@ -238,7 +256,7 @@ def compareDelays_rnai(conditions=['WT'],pulse1=5, pulse2=5, delay=[.5,1,3,5,30]
         a.set_xlim(-.5,len(delay)+.5)
     fig.suptitle(f'{pulse1}s pulse 1, {pulse2}s pulse 2, variable delay')
     plt.legend()
-    return fig,ax
+    return fig,ax, measure_distributions
 
 #################################################################################
 
@@ -373,7 +391,7 @@ def compareFirstPulse(pulse1=[1,5,10], pulse2=5, delay=3,
     with open(name,'rb') as f:
             result = pickle.load(f)
     ref_name = 'data/LDS_response_uvRange.pickle'
-    ref_name = 'data/LDS_response_rnai.pickle'
+    # ref_name = 'data/LDS_response_rnai.pickle'
     with open(ref_name,'rb') as f:
         result_ref = pickle.load(f)
 
@@ -415,6 +433,14 @@ def compareFirstPulse(pulse1=[1,5,10], pulse2=5, delay=3,
     c='cornflowerblue'
     #loop through conditions
     for i,p1 in enumerate(pulse1):
+        # solve for pulse 1 reference
+        if p1==5:
+            pulse1_ref = 'WT'
+        else:
+            pulse1_ref = f'WT_{p1}s'
+        yp_ref_1 = result_ref[pulse1_ref]
+
+
         test = f'WT_{p1}s{pulse2}s_{delay}mDelay'
         if delay<1:
             test = f'WT_{p1}s{pulse2}s_{int(delay*60)}sDelay'
@@ -426,12 +452,21 @@ def compareFirstPulse(pulse1=[1,5,10], pulse2=5, delay=3,
             loc_ref=np.argmin(xp_ref**2)
             loc=np.argmin(xp**2)
             bott = 0
+            if True:
+                print(delay,loc_ref,yp_ref.shape)
+                baseline = np.median(yp_ref_1[:,loc_ref-(120*5):loc_ref],axis=0).mean()
+                residual = np.median(yp_ref_1[:,loc_ref+int(delay*120):loc_ref+int((delay+10)*120)],axis=0).mean()- baseline
+                print(baseline, residual)
+            else:
+                residual = 0
+            print('residual', residual)
+
             if measure_compare in DIFFERENCE:
-                y,rng,significant,dist = bootstrap_diff(yp[:,loc:loc+15*120],yp_ref[:,loc_ref:loc_ref+15*120]
+                y,rng,significant,dist = bootstrap_diff(yp[:,loc:loc+15*120]-residual,yp_ref[:,loc_ref:loc_ref+15*120]
                                            ,n_boot=n_boot,measurement=M,conf_interval=conf_interval,return_samples=True)
             elif measure_compare in RELATIVE:
                 bott=1
-                y,rng,significant,dist = bootstrap_relative(yp[:,loc:loc+15*120],yp_ref[:,loc_ref:loc_ref+15*120]
+                y,rng,significant,dist = bootstrap_relative(yp[:,loc:loc+15*120]-residual,yp_ref[:,loc_ref:loc_ref+15*120]
                                            ,n_boot=n_boot,measurement=M,conf_interval=conf_interval,return_samples=True)
             else:
                 y,rng,dist = bootstrap(yp[:,loc:loc+15*120],n_boot=n_boot,statistic=M,conf_interval=conf_interval,return_samples=True)
@@ -591,7 +626,7 @@ def regeneration_qunatify(condition, ref, n_boot=1e3, conf_interval=99,
         for n_m, M in enumerate(pop_measure):
             bott = 0
             if measure_compare in DIFFERENCE:
-                y,rng,significant,dist = bootstrap_diff(yp[:,loc:loc+10*120],yp_ref[:,loc_ref:loc_ref+10*120]
+                y_diff,rng,significant,dist_diff = bootstrap_diff(yp[:,loc:loc+10*120],yp_ref[:,loc_ref:loc_ref+10*120]
                                            ,n_boot=n_boot,measurement=M,conf_interval=conf_interval,return_samples=True)
             elif measure_compare in RELATIVE:
                 bott=1
@@ -629,6 +664,17 @@ def regeneration_qunatify(condition, ref, n_boot=1e3, conf_interval=99,
                 ax[n_m].scatter([x_loc],[y],color=c,label='paired pulse')
             else:
                 ax[n_m].scatter([x_loc],[y],color=c,)
+
+            c='magenta'
+            v = ax[n_m].violinplot([dist_diff],positions=[x_loc],vert=True,widths=[width],
+                                        showmeans=False,showextrema=False,)
+            for pc in v['bodies']:
+                pc.set_facecolor(c)
+            if i==0:
+                ax[n_m].scatter([x_loc],[y_diff],color=c,label='Sensitization')
+            else:
+                ax[n_m].scatter([x_loc],[y_diff],color=c,)
+
             # if i==0:
             #     ax[n_m].scatter([x_loc],[y],color=c,label=cond)
             # else:

@@ -3,9 +3,10 @@ import matplotlib.pyplot as plt
 import pickle
 from .bootstrapTest import bootstrap_traces, bootstrapTest, bootstrap, timeDependentDifference
 from .bootstrapTest import bootstrap_diff, bootstrap_relative
-from .measurements import adaptationTime, peakResponse, totalResponse, totalResponse_pop, responseDuration, halfLife
+from .measurements import adaptationTime, peakResponse, totalResponse, totalResponse_pop, responseDuration
 from .measurements import sensitization, habituation,sensitizationRate,habituationRate, tPeak
 from tools.measurements import pulsesPop, sensitization, habituation
+
 def data_of_interest(names,interest=[],exclude=[]):
     to_plot = []
     for dat in names:
@@ -75,13 +76,8 @@ def rnai_response_layered(interest_list,exclude,n_boot=1e3,statistic=np.median,d
                           measure_compare=None,ind_measure=[],
                           pop_measure=[responseDuration,totalResponse_pop,peakResponse],
                           pulseTimes=[5,30],conf_interval=99, stat_testing=True,
-                         plot_comparison=True, ylim=(0,2),control_rnai=False,
-                         compare_rnai=False,compile_results=True,
-                         ref_name='WT'): #peakResponse,
+                         plot_comparison=True, ylim=(0,2),control_rnai=False): #peakResponse,
     '''compiles 5s and 30s data for given genes of interest and layers on plot'''
-    # compare_rnai whether to stat_test between two rnai conditions
-    if compare_rnai and (not len(interest_list)==2):
-        raise ValueError("interst list must be exactly two to compare_rnai")
     name = 'data/LDS_response_rnai.pickle'
     if drugs:
         name = 'data/LDS_response_drugs.pickle'
@@ -101,8 +97,6 @@ def rnai_response_layered(interest_list,exclude,n_boot=1e3,statistic=np.median,d
     fig, ax_all=plt.subplots(nrows=len(pulseTimes), ncols=1+len(pop_measure)+len(ind_measure),
                              sharex='col', sharey=False,figsize=(15,10),
                              gridspec_kw={'width_ratios': [4]+[1 for _ in range(len(pop_measure)+len(ind_measure))]})
-    if len(pulseTimes)==1:
-        ax_all=ax_all[None,:]
     ax = ax_all[:,0]
     ax2 = ax_all[:,1:]
     tic_loc = []
@@ -111,10 +105,7 @@ def rnai_response_layered(interest_list,exclude,n_boot=1e3,statistic=np.median,d
     Y_REF = []
     for num,pulse in enumerate(pulseTimes):
         xp=result['tau']-pulse/60
-        if ref_name=="WT":
-            exclude_this=['35mm','p']
-        else:
-            exclude_this=["1F"]
+        exclude_this=['35mm','p']
         # if pulse==5:
         #     yp_ref = result['WT']
         # else:
@@ -122,12 +113,12 @@ def rnai_response_layered(interest_list,exclude,n_boot=1e3,statistic=np.median,d
 
         if pulse==5:
             exclude_this.extend(['_30s','_1s','_'])
-            interest_i=[ref_name]
+            interest_i=['WT']
             if control_rnai:
                 interest_i.append('cntrl')
         else:
-            interest_i = [f'{ref_name}_{pulse}s']
-            if control_rnai and ref_name=="WT":
+            interest_i = [f'WT_{pulse}s']
+            if control_rnai:
                 interest_i.append(f'cntrl_{pulse}s')
         to_plot = data_of_interest(result.keys(),interest_i,exclude_this)
         if len(to_plot)==0: continue
@@ -201,41 +192,29 @@ def rnai_response_layered(interest_list,exclude,n_boot=1e3,statistic=np.median,d
             tic_name.append(M.__name__)
 
     ''' Loop through genes'''
-    if compare_rnai:
-        RNAI_REF = []
     for i,interest in enumerate(interest_list):
         c=plt.cm.Set1(i/9)
         for num,pulse in enumerate(pulseTimes):
             exclude_this = exclude.copy()
-            if compile_results:
-                if pulse==5:
-                    exclude_this.extend(['_30s','_1s','_','_40s','_10s'])
-                    xp=result['tau']-5/60
-                    interest_i=interest
-                    # yp_ref = result['WT']
-                else:
-                    # exclude_this.extend(['_1s'])
-                    interest_i = interest+f'_{pulse}s'
-                    xp=result['tau']-pulse/60
-                    # yp_ref=result['WT_30s']
-
-                conditional_exclude = ['+','PreRegen','1F']
-                for c_e in conditional_exclude:
-                    if not c_e in interest:
-                        exclude_this.append(c_e)
-                # if not '+' in interest:
-                #     exclude_this.append('+')
-                # if not 'PreRegen' in interest:
-                #     exclude_this.append('PreRegen')
-                to_plot = data_of_interest(result.keys(),[interest_i],exclude_this)
+            if pulse==5:
+                exclude_this.extend(['_30s','_1s','_','_40s','_10s'])
+                xp=result['tau']-5/60
+                interest_i=interest
+                # yp_ref = result['WT']
             else:
-                if pulse==5:
-                    to_plot = [interest]
-                    xp = result['tau']-5/60
-                else:
-                    to_plot = [interest+f'_{pulse}s']
-                    xp=result['tau']-pulse/60 
-
+                # exclude_this.extend(['_1s'])
+                interest_i = interest+f'_{pulse}s'
+                xp=result['tau']-pulse/60
+                # yp_ref=result['WT_30s']
+            conditional_exclude = ['+','PreRegen','1F']
+            for c_e in conditional_exclude:
+                if not c_e in interest:
+                    exclude_this.append(c_e)
+            # if not '+' in interest:
+            #     exclude_this.append('+')
+            # if not 'PreRegen' in interest:
+            #     exclude_this.append('PreRegen')
+            to_plot = data_of_interest(result.keys(),[interest_i],exclude_this)
             if len(to_plot)==0: continue
             print(to_plot)
 
@@ -243,8 +222,6 @@ def rnai_response_layered(interest_list,exclude,n_boot=1e3,statistic=np.median,d
             for dat in to_plot:
                 yp.extend(result[dat])
             yp = np.array(yp)
-            if compare_rnai and i==0:
-                RNAI_REF.append(yp)
             y,rng = bootstrap_traces(yp[:,ind_t],n_boot=n_boot,statistic=statistic,conf_interval=conf_interval)
             ax[num].plot(xp[ind_t],y,label=f'{interest} ({yp.shape[0]})',lw=1,color=c,zorder=-1)
             ax[num].fill_between(xp[ind_t],*rng,alpha=.1,color=c,lw=0,edgecolor='None',zorder=-2)
@@ -266,21 +243,6 @@ def rnai_response_layered(interest_list,exclude,n_boot=1e3,statistic=np.median,d
                 ax[num].plot([ind_sig[0],ind_sig[0]],[bott[0],bott[0]-y_sig],**box_keys)
                 ax[num].plot([10,10],[bott[0],bott[0]-y_sig],**box_keys)
 #                 ax[num].set_ylim(bott[0]-y_sig,2)
-                if compare_rnai and i>0:
-                    time_sig = timeDependentDifference(yp[:,ind_sig],RNAI_REF[num][:,ind_sig],n_boot=n_boot,conf_interval=conf_interval)
-                    x_sig = xp[ind_sig]#np.arange(0,10,1/120)
-                    y_sig = .1*(ylim[num][1]-ylim[num][0])
-                    if len(interest_list)>1:
-                        y_sig=2*y_sig/len(interest_list)
-                    bott = np.zeros_like(x_sig)+ylim[num][1] - (i+1)*y_sig
-                    ax[num].fill_between(x_sig,bott,bott-y_sig*time_sig,
-                        facecolor='gold',alpha=.4)
-                    box_keys={'lw':1, 'c':'k'}
-                    ax[num].plot(x_sig,bott,**box_keys)
-                    ax[num].plot(x_sig,bott-y_sig,**box_keys)
-                    ax[num].plot([ind_sig[0],ind_sig[0]],[bott[0],bott[0]-y_sig],**box_keys)
-                    ax[num].plot([10,10],[bott[0],bott[0]-y_sig],**box_keys)
-
 
                 #calculate population based measures
                 for n_m, M in enumerate(pop_measure):
@@ -311,28 +273,6 @@ def rnai_response_layered(interest_list,exclude,n_boot=1e3,statistic=np.median,d
                         ax2[num,n_m].plot([x_loc,x_loc],rng,color=c)
                     if significant:
                         mark_sig(ax2[num,n_m],x_loc,c=c,yy=rng[1]*1.1)
-
-                    if compare_rnai and i>0:
-                        c2 = 'goldenrod'
-                        print("MARK1")
-                        if measure_compare in DIFFERENCE:
-                            y,rng2,significant = bootstrap_diff(yp[:,loc:loc+15*120],RNAI_REF[num][:,loc:loc+15*120]
-                                                    ,n_boot=n_boot_meas,measurement=M,conf_interval=conf_interval)
-                        elif measure_compare in RELATIVE:
-                            bott=1
-                            y,rng2,significant = bootstrap_relative(yp[:,loc:loc+15*120],RNAI_REF[num][:,loc:loc+15*120]
-                                                    ,n_boot=n_boot_meas,measurement=M,conf_interval=conf_interval)
-                        else:
-                            y,rng2 = bootstrap(yp[:,loc:loc+15*120],n_boot=n_boot_meas,statistic=M,conf_interval=conf_interval)
-                            significant=False
-                        print(significant)
-                        x_loc= (i+1)*.07+.02# n_m + (i+1)*.07   #n_m*(len(interest_list)+1)+i+1
-                        if significant:
-                            mark_sig(ax2[num,n_m],x_loc,c=c2,yy=rng[1]*1.1)
-
-
-
-
 #                     ax2[num,n_m].set_ylim(ymin=0)
                 #calculate individual based
                 for n_m2, M in enumerate(ind_measure):
@@ -360,49 +300,6 @@ def rnai_response_layered(interest_list,exclude,n_boot=1e3,statistic=np.median,d
                         ax2[num,n_m2+len(pop_measure)].plot([x_loc2,x_loc2],rng,color=c)
                     if significant:
                         mark_sig(ax2[num,n_m2+len(pop_measure)],x_loc,c=c,yy=rng[1]*1.1)
-
-
-                    if compare_rnai:
-                        c='gold'
-                        value_ref = M(RNAI_REF[num][:,loc:loc+15*120])
-                        if measure_compare in DIFFERENCE:
-                            y,rng,significant = bootstrap_diff(value,value_ref,n_boot=n_boot_meas,measurement=None,conf_interval=conf_interval)
-                        elif measure_compare in RELATIVE:
-                            y,rng,significant = bootstrap_relative(value,value_ref,n_boot=n_boot_meas,measurement=None,conf_interval=conf_interval)
-                        else:
-                            y,rng = bootstrap(value,n_boot=n_boot_meas,conf_interval=conf_interval)
-                            significant=False
-                        x_loc2 = (i+1)*.07#len(pop_measure) + n_m2 + (i+1)*.07  #n_m2*(len(interest_list)+1)+i+1 + x_loc +1
-                        if not plot_comparison:
-                            y,rng,dist = bootstrap(value,n_boot=n_boot_meas,conf_interval=conf_interval,return_samples=True)
-                            v = ax2[num,n_m].violinplot([dist],positions=[x_loc2],vert=True,widths=[.07],
-                                                        showmeans=False,showextrema=False)
-                            ax2[num,n_m].scatter([x_loc2],[y],color=c)
-                            for pc in v['bodies']:
-                                pc.set_facecolor(c)
-    #                         ax2[num,n_m].set_ylim(bottom=0)
-                        else:
-                            ax2[num,n_m2+len(pop_measure)].bar([x_loc2],[y-1],color=c,width=.07,bottom=[1],alpha=.2)
-                            ax2[num,n_m2+len(pop_measure)].plot([x_loc2,x_loc2],rng,color=c)
-                        if significant:
-                            mark_sig(ax2[num,n_m2+len(pop_measure)],x_loc+.02,c=c,yy=rng[1]*1.1)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         ax[0].legend()
         ax[num].legend()
     if stat_testing:
@@ -433,7 +330,6 @@ def rnai_response_layered(interest_list,exclude,n_boot=1e3,statistic=np.median,d
 #         ax2[-1].set_ylabel('M(gene)')
 #     ax2[-1].set_xlabel('M')
     return fig, ax
-
 
 ################################################################################
 

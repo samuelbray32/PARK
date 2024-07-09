@@ -22,15 +22,38 @@ def adaptationTime(data):
     x_max = x.max()
     loc = np.argmax(x)
     try:
-        return np.where(x[loc:]/x.max()<=.5)[0][0]/120
+        return np.where(x[loc:]/x.max()<=.5)[0][0]/120.0
     except: return 0
+
+def halfLife(data):
+    x = np.median(data,axis=0)
+    # x = x-np.median(x[-120:])
+    loc = np.argmax(x)
+    val = x[loc]
+    # print(val)
+    try:
+        # print((loc + np.where(x[loc:]<=val/2)[0][0])/120.0)
+        # return np.where(x>=val/2)[0][-1]/120
+        return (loc + np.where(x[loc:]<=val/2)[0][0])/120.0
+    except:
+        print('none')
+        return np.nan()#loc)/120
+    
 
 def responseDuration(data,thresh=.3):
     '''time for population traces to go below threshold value'''
     x = np.median(data,axis=0)
+    # print(thresh)
+    # loc = np.where(x>=thresh)[0]
+    # if len(loc)>0:
+    #     loc = loc[0]
+    # else:
+    #     return 1/120
+    # x = x[loc:]
+    # return np.where(x<=thresh)[0][0]/120
     try:
         return np.where(x<=thresh)[0][0]/120
-    except: 
+    except:
         if x.mean()>thresh: #if didn't go below threshold in sample window
             return x.size/120
         else:
@@ -47,6 +70,23 @@ def totalResponse_pop(data):
 def totalResponse(data):
     '''total response of individual trace'''
     return np.mean(data,axis=1)
+
+def peakTime(data): 
+    '''Calculate the time at which the peak response occurs''' 
+    sampling_rate = 120
+    median_data = np.median(data, axis=0)
+    peak_index = np.argmax(median_data)
+    peak_time = peak_index / sampling_rate
+    return peak_time
+
+def slidingPeak(data):
+    window_size = 20
+    sampling_rate = 120
+    median_data = np.median(data, axis=0)
+    windowed_peak_indices = np.convolve(median_data, np.ones(window_size)/window_size, mode='valid').argmax()
+    peak_index = windowed_peak_indices + window_size // 2
+    sliding_peak = peak_index / sampling_rate
+    return sliding_peak  
 
 ######################################
 #     Pulse train measurements       #
@@ -109,3 +149,37 @@ def tPeak(data):
     ''' (peak response-first response)'''
     #shape = (samples, pulses)
     return data.argmax(axis=1)/data.shape[1]
+
+'''
+Sin Wave measurements
+'''
+
+def cross_correlate(x,U,tau):
+    xx = np.median(x,axis=0)
+    # xx = xx-xx.mean()
+    # uu = U-U.mean()
+    # return np.array([np.cov(xx[t:],U[:-t])[0,1] for t in tau])
+    return np.array([np.cov([xx],np.roll(U,t))[0,1] for t in tau]) # SB-changed 2/09/23 to avoid cropping the range with longer lag times
+
+def cross_correlate_auto(x,tau):
+    # if len(x.shape)>1:
+    #     x = np.median(x,axis=0)
+    # xx = xx-xx.mean()
+    # uu = U-U.mean()
+    return np.array([np.cov(x[t:],x[:-t])[0,1] for t in tau])
+
+from scipy import signal
+def power_spectrum(x, sampling_rate=2, window_size=None):
+    if window_size is None:
+        window_size = 30*120#x.size//1
+    window_filt = signal.windows.hamming(window_size, sym=True)
+    noverlap = window_size//2
+    frequencies, P = signal.welch(
+        x,
+        fs = sampling_rate,
+        window = window_filt,
+        noverlap=noverlap,
+        scaling='spectrum',
+        nfft=50000
+    )
+    return frequencies, P/np.max(P)
